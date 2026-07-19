@@ -1,0 +1,17 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.selflabbs/filings-intel-mcp",
+  "title": "Filings Intel MCP",
+  "description": "SEC EDGAR filings for AI agents: company lookup, filings, financials, insider trades. No keys.",
+  "version": "1.0.0",
+  "repository": {
+    "url": "https://github.com/selflabbs/filings-intel-mcp",
+    "source": "github"
+  },
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://filings.selflabbs.com/mcp"
+    }
+  ]
+}
