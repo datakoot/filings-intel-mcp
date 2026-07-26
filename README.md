@@ -1,4 +1,4 @@
-# Filings Intel MCP — by SelfLabbs
+# Filings Intel MCP — by Datakoot
 
 SEC EDGAR for AI agents — as MCP tools your agent can call mid-task to research a US public company's filings, financials and insider activity. No API keys.
 
@@ -17,13 +17,13 @@ No API keys required.
 ## Quick start
 
 ```
-claude mcp add --transport http filings-intel https://filings.selflabbs.com/mcp
+claude mcp add --transport http filings-intel https://filings.datakoot.com/mcp
 ```
 
-Or point any MCP client at `https://filings.selflabbs.com/mcp`.
+Or point any MCP client at `https://filings.datakoot.com/mcp`.
 
 ## Data & attribution
 
 All data comes from the [SEC EDGAR](https://www.sec.gov/edgar) system (US Securities and Exchange Commission), which is US-government public domain. Requests are made with an identifying User-Agent per SEC's fair-access policy. Informational only — not investment advice.
 
-Part of [SelfLabbs](https://selflabbs.com) — keyless intelligence APIs for AI agents.
+Part of [Datakoot](https://datakoot.com) — keyless intelligence APIs for AI agents.
