@@ -1,17 +1,17 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.selflabbs/filings-intel-mcp",
+  "name": "io.github.datakoot/sec-edgar-filings",
   "title": "Filings Intel MCP",
   "description": "SEC EDGAR filings for AI agents: company lookup, filings, financials, insider trades. No keys.",
-  "version": "1.0.0",
+  "version": "2.1.0",
   "repository": {
-    "url": "https://github.com/selflabbs/filings-intel-mcp",
+    "url": "https://github.com/datakoot/filings-intel-mcp",
     "source": "github"
   },
   "remotes": [
     {
       "type": "streamable-http",
-      "url": "https://filings.selflabbs.com/mcp"
+      "url": "https://filings.datakoot.com/mcp"
     }
   ]
 }
