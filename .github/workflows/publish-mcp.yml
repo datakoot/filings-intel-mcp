@@ -44,6 +44,22 @@ jobs:
           DNS_KEY: ${{ secrets.MCP_REGISTRY_DNS_KEY }}
         run: ./mcp-publisher login dns --domain datakoot.com --private-key "$DNS_KEY"
 
+      # The registry allows one server name per remote URL. These servers were
+      # first published as com.datakoot/<repo-name>, which still holds the URL
+      # and blocks the searchable name from taking it.
+      #
+      # mcp-publisher status asks "Continue? [y/N]" on a terminal. A runner has
+      # no stdin, so it reads EOF and quietly aborts. Pipe an answer in.
+      - name: Retire the old listing holding this URL
+        if: steps.gate.outputs.have_key == 'true'
+        continue-on-error: true
+        run: |
+          OLD="com.datakoot/${GITHUB_REPOSITORY#*/}"
+          echo "Retiring $OLD"
+          yes | ./mcp-publisher status --status deleted --all-versions \
+            --message "Renamed so registry search can actually find it" \
+            "$OLD"
+
       - name: Publish
         if: steps.gate.outputs.have_key == 'true'
         run: ./mcp-publisher publish
