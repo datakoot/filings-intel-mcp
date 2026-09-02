@@ -1,6 +1,6 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.datakoot/sec-edgar-filings",
+  "name": "com.datakoot/sec-edgar-filings",
   "title": "Filings Intel MCP",
   "description": "SEC EDGAR filings for AI agents: company lookup, filings, financials, insider trades. No keys.",
   "version": "2.1.0",
