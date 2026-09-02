@@ -16,12 +16,34 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The com.datakoot namespace is proved by DNS, not by GitHub OIDC.
+      # The registry rejects a remote URL whose host does not match the
+      # publisher domain, so io.github.datakoot can never publish a server
+      # whose remote lives on datakoot.com. Until the Ed25519 signing key is
+      # set as an organization secret, skip cleanly instead of failing.
+      - name: Check for the DNS signing key
+        id: gate
+        env:
+          DNS_KEY: ${{ secrets.MCP_REGISTRY_DNS_KEY }}
+        run: |
+          if [ -z "$DNS_KEY" ]; then
+            echo "have_key=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Skipped: organization secret MCP_REGISTRY_DNS_KEY is not set."
+          else
+            echo "have_key=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Install mcp-publisher
+        if: steps.gate.outputs.have_key == 'true'
         run: |
           curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
 
-      - name: Login to registry (GitHub OIDC)
-        run: ./mcp-publisher login github-oidc
+      - name: Login to registry (DNS)
+        if: steps.gate.outputs.have_key == 'true'
+        env:
+          DNS_KEY: ${{ secrets.MCP_REGISTRY_DNS_KEY }}
+        run: ./mcp-publisher login dns --domain datakoot.com --private-key "$DNS_KEY"
 
       - name: Publish
+        if: steps.gate.outputs.have_key == 'true'
         run: ./mcp-publisher publish
