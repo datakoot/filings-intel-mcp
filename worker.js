@@ -276,8 +276,8 @@ function landing(host) {
 
 <section class="section" id="pricing"><h2>Pricing</h2><div class="tiers">
 <div class="tier"><b>Free</b><span>100 calls / day</span><span>Every tool, no key.</span></div>
-<div class="tier"><b>$15/mo · Pro</b><span>10,000 calls / month</span><span>1 seat · one key unlocks all nine Datakoot servers · then $5 per 1,000, capped at $100.</span><a class="btn" href="${CHECKOUT}">Upgrade</a></div>
-<div class="tier"><b>$49/mo · Team</b><span>50,000 calls / month</span><span>Up to 5 seats · then $5 per 1,000.</span><a class="btn" href="${CHECKOUT}">Upgrade</a></div>
+<div class="tier"><b>$15/mo · Pro</b><span>10,000 calls / month</span><span>One key unlocks all nine Datakoot servers · then $5 per 1,000, capped at $100.</span><a class="btn" href="${CHECKOUT}">Upgrade</a></div>
+<div class="tier"><b>$49/mo · Team</b><span>50,000 calls / month</span><span>One shared key for your whole team · then $5 per 1,000, capped at $100.</span><a class="btn" href="${CHECKOUT}">Upgrade</a></div>
 </div></section>
 </div>
 <footer><a href="https://datakoot.com/" style="color:inherit">Datakoot</a> — infrastructure for the agent economy · <a href="https://github.com/datakoot">GitHub</a> · Data: U.S. SEC EDGAR (public domain)</footer>
