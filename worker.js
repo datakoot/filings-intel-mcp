@@ -32,10 +32,15 @@ const json = (obj, status = 200, extra = {}) =>
   new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json", ...CORS, ...extra } });
 
 async function getJSON(url, { ttl = 3600 } = {}) {
-  const r = await fetch(url, { headers: { "User-Agent": UA, Accept: "application/json" }, cf: { cacheTtl: ttl, cacheEverything: true } });
+  const cache = caches.default; const ckey = new Request(url, { method: "GET" });
+  const hit = await cache.match(ckey); if (hit) { try { return await hit.json(); } catch (e) {} }
+  const up = dkUpstreamFor(url); if (up) { const n = await dkUpstreamCount(up); if (n !== null && n > up.limit) return dkBusy(up); }
+  const r = await fetch(url, { headers: { "User-Agent": UA, Accept: "application/json" } });
   if (r.status === 404) return { _notfound: true };
   if (!r.ok) return { _error: `SEC EDGAR returned ${r.status}` };
-  try { return await r.json(); } catch { return { _error: "bad json from EDGAR" }; }
+  const txt = await r.text();
+  try { await cache.put(ckey, new Response(txt, { headers: { "Content-Type": "application/json", "Cache-Control": "max-age=" + ttl } })); } catch (e) {}
+  try { return JSON.parse(txt); } catch (e) { return { _error: "bad json from EDGAR" }; }
 }
 const pad10 = (cik) => String(cik).replace(/\D/g, "").padStart(10, "0");
 
@@ -288,6 +293,7 @@ function landing(host) {
 export default {
   async fetch(request, env) {
     if (DK_SALT === null) DK_SALT = env.IP_SALT || "";
+    if (DK_QDB === null) DK_QDB = env.QUOTA_DB || false;
     if (request.method === "OPTIONS") return new Response(null, { headers: CORS });
     const url = new URL(request.url);
     if (url.pathname.endsWith("/.well-known/owners.json")) return json({ $schema: "https://verifymcp.io/schemas/owners.json", owners: ["hello@datakoot.com"] });
@@ -357,6 +363,28 @@ async function dkBump(env, k, period) {
  * secret degrades privacy rather than taking the service down.
  */
 let DK_SALT = null, DK_KEY = null;
+// --- Global upstream circuit breaker (shared across all callers, colos, IPs) ---
+// Caching absorbs repeated queries; this caps how fast DISTINCT queries reach a
+// rate-sensitive source, so no flood can get Datakoot blocked. Trips into an
+// honest "briefly busy, retry" - never fake data. Fails open on any D1 problem.
+let DK_QDB = null;
+const DK_UP_LIMITS = [{ host: "data.sec.gov", key: "sec", win: 10, limit: 50 }, { host: "www.sec.gov", key: "sec", win: 10, limit: 50 }, { host: "efts.sec.gov", key: "sec", win: 10, limit: 50 }];
+function dkUpstreamFor(url) {
+  try { const h = new URL(url).hostname; for (const x of DK_UP_LIMITS) if (x.host === h) return x; return null; }
+  catch (e) { return null; }
+}
+const DK_UP_SQL = "INSERT INTO upstream_rl (k, n, exp) VALUES (?1, 1, ?2) ON CONFLICT(k) DO UPDATE SET n = n + 1 RETURNING n";
+async function dkUpstreamCount(u) {
+  if (!DK_QDB) return null;
+  const now = Math.floor(Date.now() / 1000); const bucket = Math.floor(now / u.win);
+  try { const row = await DK_QDB.prepare(DK_UP_SQL).bind("up:" + u.key + ":" + bucket, (bucket + 1) * u.win).first();
+        return row && typeof row.n === "number" ? row.n : null; }
+  catch (e) { return null; }
+}
+function dkBusy(u) {
+  return { _busy: true, _error: "Datakoot is briefly pausing calls to " + u.key.toUpperCase() +
+    " to stay within its fair-use rate limit. This is a short, deliberate pause on our side, NOT an outage and NOT a statement about your query - retry in a few seconds." };
+}
 async function dkMacKey() {
   if (!DK_KEY) {
     DK_KEY = await crypto.subtle.importKey(
