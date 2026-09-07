@@ -281,8 +281,7 @@ function landing(host) {
 
 <section class="section" id="pricing"><h2>Pricing</h2><div class="tiers">
 <div class="tier"><b>Free</b><span>100 calls / day</span><span>Every tool, no key.</span></div>
-<div class="tier"><b>$15/mo · Pro</b><span>10,000 calls / month</span><span>One key unlocks all nine Datakoot servers · then $5 per 1,000, capped at $100.</span><a class="btn" href="${CHECKOUT}">Upgrade</a></div>
-<div class="tier"><b>$49/mo · Team</b><span>50,000 calls / month</span><span>One shared key for your whole team · then $5 per 1,000, capped at $100.</span><a class="btn" href="${CHECKOUT}">Upgrade</a></div>
+<div class="tier"><b>$15/mo · Pro</b><span>50,000 calls / month · no daily limit</span><span>One key unlocks all nine Datakoot servers. Full speed to 50k, then free-tier speed or top up — never cut off.</span><a class="btn" href="${CHECKOUT}">Upgrade</a></div>
 </div></section>
 </div>
 <footer><a href="https://datakoot.com/" style="color:inherit">Datakoot</a> — infrastructure for the agent economy · <a href="https://github.com/datakoot">GitHub</a> · Data: U.S. SEC EDGAR (public domain)</footer>
@@ -333,8 +332,7 @@ export default {
  * the free allowance, so a caller-facing meter line reads correctly either way.
  * ========================================================================= */
 const DK_FREE_LIMIT = 100;        // anonymous, keyless, per UTC day
-const DK_PRO_INCLUDED = 10000;    // calls included in Pro each month
-const DK_OVERAGE_PER = 1000;      // then $5 per 1,000
+const DK_PRO_INCLUDED = 50000;    // calls included in Pro each month
 const DK_CHECKOUT = "https://buy.polar.sh/polar_cl_Q9y3qLrNbtsssN3w5m8SK56oNcruwrmxLEPnd34oAZf";
 const DK_POLAR_ORG = "7f455043-0b15-4a1c-b7a0-9c06c9f3b95e";
 const DK_BUMP_SQL =
@@ -436,12 +434,18 @@ async function dkGate(request, env) {
         headers: dkHeaders(DK_FREE_LIMIT, 0),
         message: "That Datakoot API key was not recognised. Check it at https://datakoot.com/pricing, or remove the Authorization header to use the free tier (" + DK_FREE_LIMIT + " calls/day, no signup)." };
     }
-    // Pro is metered but never blocked: overage is billed, not refused.
+    // Pro: 50,000 calls a month, no daily limit. Past the monthly bucket we do
+    // NOT bill overage and never hard-wall: soft-fall-back to the free daily
+    // allowance for the rest of the month, or top up.
     if (env.QUOTA_DB) {
-      try { await dkBump(env, "pro:" + (await dkSha96("dk1:" + key)), new Date().toISOString().slice(0, 7)); }
-      catch (e) { console.error("QUOTA error (pro):", e && e.message); }
+      try {
+        const used = await dkBump(env, "pro:" + (await dkSha96("dk1:" + key)), new Date().toISOString().slice(0, 7));
+        if (used <= DK_PRO_INCLUDED) return DK_OPEN;
+        // bucket spent -> fall through to the free daily meter below (soft fallback)
+      } catch (e) { console.error("QUOTA error (pro):", e && e.message); return DK_OPEN; }
+    } else {
+      return DK_OPEN;
     }
-    return DK_OPEN;
   }
 
   if (!env.QUOTA_DB) {
@@ -461,7 +465,7 @@ async function dkGate(request, env) {
   if (n > DK_FREE_LIMIT) {
     return { allowed: false, ok: false, pro: false, remaining: 0, limit: DK_FREE_LIMIT, meta: "",
       headers: dkHeaders(DK_FREE_LIMIT, 0),
-      message: "Daily free limit reached (" + DK_FREE_LIMIT + " calls). It resets at 00:00 UTC. Datakoot Pro includes " + DK_PRO_INCLUDED.toLocaleString() + " calls a month across all nine servers for $15, then $5 per " + DK_OVERAGE_PER.toLocaleString() + " — " + DK_CHECKOUT };
+      message: "Daily free limit reached (" + DK_FREE_LIMIT + " calls). It resets at 00:00 UTC. Datakoot Pro is " + DK_PRO_INCLUDED.toLocaleString() + " calls a month across all nine servers for $15 with no daily limit — " + DK_CHECKOUT };
   }
   const left = DK_FREE_LIMIT - n;
   return { allowed: true, ok: true, pro: false, remaining: left, limit: DK_FREE_LIMIT, message: "",
