@@ -22,6 +22,25 @@ claude mcp add --transport http filings-intel https://filings.datakoot.com/mcp
 
 Or point any MCP client at `https://filings.datakoot.com/mcp`.
 
+## Try it in 10 seconds — no key, no signup
+
+Paste this into a terminal:
+
+```bash
+curl -s https://filings.datakoot.com/mcp \
+  -H 'content-type: application/json' \
+  -H 'accept: application/json, text/event-stream' \
+  -d '{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "recent_filings", "arguments": {"query": "Tesla"}}}'
+```
+
+You get Tesla's most recent SEC EDGAR filings, straight from the source — no API key, nothing to sign up for.
+
+Or point any MCP client at the URL and just ask your agent, in plain language:
+
+- "What did Tesla just file with the SEC?"
+- "Pull Apple's latest financials and insider transactions."
+
+
 ## Data & attribution
 
 All data comes from the [SEC EDGAR](https://www.sec.gov/edgar) system (US Securities and Exchange Commission), which is US-government public domain. Requests are made with an identifying User-Agent per SEC's fair-access policy. Informational only — not investment advice.
