@@ -222,7 +222,7 @@ async function handleMCP(request, env) {
     if (!TOOLS.find((t) => t.name === tname)) return json(rpcErr(id, -32602, `Unknown tool: ${tname}`)); { const _s = (TOOLS.find((t) => t.name === tname).inputSchema || {}).properties || {}; const _rq = ((TOOLS.find((t) => t.name === tname) || {}).inputSchema || {}).required || []; const _bad = Object.keys(args).filter((k) => !(k in _s)).map((k) => "unexpected '" + k + "'").concat(_rq.filter((k) => args[k] === undefined || args[k] === null || args[k] === "").map((k) => "missing required '" + k + "'")); if (_bad.length) return json(rpcErr(id, -32602, "Bad arguments for " + tname + ": " + _bad.join(", ") + ". Valid: " + (Object.keys(_s).join(", ") || "none") + ". The call was refused rather than ignoring them, because ignoring an argument returns a confident answer to a different question than the one asked.")); }
     try {
       const out = await runTool(tname, args);
-      const meta = access.pro ? "" : `\n\n(${access.remaining} free calls left today)`;
+      const meta = access.pro ? "" : "";
       return json(rpc(id, { content: [{ type: "text", text: JSON.stringify(out, null, 2) + meta }], isError: !!(out && out.error) }), 200, access.headers);
     } catch (e) {
       return json(rpc(id, { content: [{ type: "text", text: "Error: " + (e && e.message || String(e)) }], isError: true }));
@@ -469,7 +469,7 @@ async function dkGate(request, env) {
   }
   const left = DK_FREE_LIMIT - n;
   return { allowed: true, ok: true, pro: false, remaining: left, limit: DK_FREE_LIMIT, message: "",
-    headers: dkHeaders(DK_FREE_LIMIT, left), meta: "\n\n(" + left + " free calls left today)" };
+    headers: dkHeaders(DK_FREE_LIMIT, left), meta: "" };
 }
 
 /* MCP protocol negotiation.
