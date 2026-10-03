@@ -167,6 +167,30 @@ async function runTool(name, args) {
     const facts = await getJSON(`https://data.sec.gov/api/xbrl/companyfacts/CIK${ent.cik}.json`, { ttl: 3600 });
     if (facts._error || facts._notfound || !facts.facts) return { error: "no XBRL financial facts available for this company" };
     const gaap = facts.facts["us-gaap"] || {};
+    // Annual series for one concept: full-year 10-K periods only (flow concepts ~12 months; instant concepts have no start),
+    // one value per period end (latest filing wins), sorted oldest -> newest, labelled with the fiscal year the period belongs to.
+    const annualSeries = (concept) => {
+      const node = gaap[concept];
+      if (!node || !node.units) return null;
+      const unitKey = node.units.USD ? "USD" : Object.keys(node.units)[0];
+      const rows = (node.units[unitKey] || []).filter((r) => r.form && /^10-K/.test(r.form) && r.end);
+      const days = (r) => r.start ? (Date.parse(r.end) - Date.parse(r.start)) / 86400000 : null;
+      const yearly = rows.filter((r) => { const d = days(r); return d === null || (d >= 340 && d <= 390); });
+      const primaryEnd = {};
+      for (const r of yearly) { if (!primaryEnd[r.accn] || r.end > primaryEnd[r.accn]) primaryEnd[r.accn] = r.end; }
+      const byEnd = {};
+      for (const r of yearly) { const prev = byEnd[r.end]; if (!prev || (r.filed || "") > (prev.filed || "")) byEnd[r.end] = r; }
+      const fyOf = {};
+      for (const r of yearly) { if (primaryEnd[r.accn] === r.end && r.fy) fyOf[r.end] = r.fy; }
+      const series = Object.keys(byEnd).sort().map((end) => { const r = byEnd[end]; return { fiscal_year: fyOf[end] || null, period_start: r.start || null, period_end: end, value: r.val, form: r.form, filed: r.filed }; });
+      return { unit: unitKey, series };
+    };
+    const REVENUE_CONCEPTS = ["RevenueFromContractWithCustomerExcludingAssessedTax", "Revenues", "RevenueFromContractWithCustomerIncludingAssessedTax", "SalesRevenueNet", "RevenuesNetOfInterestExpense"];
+    const freshestRevenue = () => {
+      let best = null;
+      for (const c of REVENUE_CONCEPTS) { const s = annualSeries(c); const last = s && s.series.slice(-1)[0]; if (last && (!best || last.period_end > best.period_end)) best = Object.assign({ concept: c, unit: s.unit }, last); }
+      return best;
+    };
     const latestOf = (concept) => {
       const node = gaap[concept];
       if (!node || !node.units) return null;
@@ -177,14 +201,36 @@ async function runTool(name, args) {
       return pick ? { value: pick.val, unit: unitKey, period_end: pick.end, fiscal_year: pick.fy, form: pick.form } : null;
     };
     if (args.concept) {
-      const node = gaap[args.concept];
-      if (!node) return { error: `Concept '${args.concept}' not reported. Try Revenues, NetIncomeLoss, Assets, StockholdersEquity, EarningsPerShareBasic.` };
-      const unitKey = Object.keys(node.units)[0];
-      const history = (node.units[unitKey] || []).filter((r) => r.form === "10-K").map((r) => ({ fy: r.fy, period_end: r.end, value: r.val })).slice(-8);
-      return { company: facts.entityName, concept: args.concept, unit: unitKey, history };
+      const raw = String(args.concept).trim();
+      const ALIASES = { revenue: "__revenue", revenues: "__revenue", sales: "__revenue", "net income": "NetIncomeLoss", netincome: "NetIncomeLoss", profit: "NetIncomeLoss", assets: "Assets", liabilities: "Liabilities", equity: "StockholdersEquity", cash: "CashAndCashEquivalentsAtCarryingValue", eps: "EarningsPerShareDiluted" };
+      let concept = ALIASES[raw.toLowerCase()] || raw;
+      if (concept !== "__revenue" && !gaap[concept]) { const ci = Object.keys(gaap).find((k) => k.toLowerCase() === raw.toLowerCase()); if (ci) concept = ci; }
+      let note;
+      if (concept === "__revenue") {
+        let best = null;
+        for (const c of REVENUE_CONCEPTS) { const s = annualSeries(c); const last = s && s.series.slice(-1)[0]; if (last && (!best || last.period_end > best.last.period_end)) best = { c, s, last }; }
+        if (!best) return { error: `No annual revenue reported in XBRL for ${facts.entityName}.` };
+        note = `Companies report revenue under different us-gaap concepts over time; using '${best.c}', the one with the most recent annual data.`;
+        concept = best.c;
+      }
+      const s = annualSeries(concept);
+      if (!s) return { error: `Concept '${raw}' is not in ${facts.entityName}'s XBRL filings. Try revenue, NetIncomeLoss, Assets, StockholdersEquity, EarningsPerShareDiluted.` };
+      if (!s.series.length) return { error: `Concept '${concept}' has no full-year 10-K values for ${facts.entityName}.` };
+      const last = s.series.slice(-1)[0];
+      const fresh = freshestRevenue();
+      const stale = fresh && (Date.parse(fresh.period_end) - Date.parse(last.period_end)) > 400 * 86400000;
+      const out = { company: facts.entityName, concept, unit: s.unit, annual_only: true, history: s.series.slice(-10) };
+      if (note) out.note = note;
+      if (stale) out.warning = `Latest '${concept}' value is for the period ending ${last.period_end}, but this company has reported newer annual data under other concepts (through ${fresh.period_end}). It likely stopped using this concept; for revenue ask for concept 'revenue'.`;
+      return out;
     }
-    const out = { company: facts.entityName, cik: ent.cik, latest_reported: {} };
-    for (const c of KEY_CONCEPTS) { const v = latestOf(c); if (v) out.latest_reported[c] = v; }
+    const out = { company: facts.entityName, cik: ent.cik, revenue: null, latest_reported: {} };
+    const rev = freshestRevenue();
+    if (rev) out.revenue = { value: rev.value, unit: rev.unit, period_end: rev.period_end, fiscal_year: rev.fiscal_year, concept: rev.concept };
+    let newest = "";
+    for (const c of KEY_CONCEPTS) { const s = annualSeries(c); const last = s && s.series.slice(-1)[0]; if (last) { out.latest_reported[c] = { value: last.value, unit: s.unit, period_end: last.period_end, fiscal_year: last.fiscal_year, form: last.form }; if (last.period_end > newest) newest = last.period_end; } }
+    for (const c of Object.keys(out.latest_reported)) { const v = out.latest_reported[c]; if (newest && (Date.parse(newest) - Date.parse(v.period_end)) > 400 * 86400000) v.stale = true; }
+    out.note = "Annual (10-K) values only. 'revenue' is the most recent figure across the revenue concepts this company has used; entries marked stale are concepts the company no longer reports.";
     return out;
   }
   return { error: "unknown tool" };
