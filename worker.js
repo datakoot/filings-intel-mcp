@@ -289,7 +289,7 @@ function landing(host) {
 }
 
 /* ------------------------------------------------------------------ router */
-export default {
+const __dkInner = {
   async fetch(request, env) {
     if (DK_SALT === null) DK_SALT = env.IP_SALT || "";
     if (DK_QDB === null) DK_QDB = env.QUOTA_DB || false;
@@ -511,3 +511,45 @@ async function dkDaily(env, k, period) {
   } catch (e) { /* never let analytics break a paying or free call */ }
 }
 
+
+
+/* ---- Datakoot agent metadata layer (2026-10-03) ----
+ * Adds MCP 2025-06-18 tool metadata to tools/list without touching tool logic:
+ * a human title, and annotations telling agents every tool is a read-only,
+ * idempotent lookup against an external public source. Clients use these
+ * hints to skip confirmation prompts for safe tools. Anything that is not a
+ * JSON tools/list response passes through byte-for-byte.
+ */
+const __DK_ACRONYMS = { cve: "CVE", epss: "EPSS", fx: "FX", dns: "DNS", us: "US", sec: "SEC", rdap: "RDAP", url: "URL", ip: "IP" };
+function __dkTitle(name) {
+  return String(name).split("_").map((w) => __DK_ACRONYMS[w] || (w.charAt(0).toUpperCase() + w.slice(1))).join(" ");
+}
+function __dkDecorate(tool) {
+  if (!tool || typeof tool !== "object" || !tool.name) return tool;
+  const title = tool.title || __dkTitle(tool.name);
+  const ann = Object.assign({ title, readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }, tool.annotations || {});
+  return Object.assign({}, tool, { title, annotations: ann });
+}
+async function __dkWrappedFetch(request, env, ctx) {
+  let isList = false;
+  if (request.method === "POST") {
+    try {
+      const peek = await request.clone().json();
+      isList = !Array.isArray(peek) && peek && peek.method === "tools/list";
+    } catch (e) { isList = false; }
+  }
+  const res = await __dkInner.fetch(request, env, ctx);
+  if (!isList) return res;
+  try {
+    const ct = res.headers.get("content-type") || "";
+    if (!ct.includes("application/json")) return res;
+    const body = await res.clone().json();
+    if (!body || !body.result || !Array.isArray(body.result.tools)) return res;
+    body.result.tools = body.result.tools.map(__dkDecorate);
+    const h = new Headers(res.headers); h.delete("content-length");
+    return new Response(JSON.stringify(body), { status: res.status, statusText: res.statusText, headers: h });
+  } catch (e) {
+    return res;
+  }
+}
+export default Object.assign({}, __dkInner, { fetch: __dkWrappedFetch });
