@@ -465,7 +465,7 @@ async function dkGate(request, env) {
   if (n > DK_FREE_LIMIT) {
     return { allowed: false, ok: false, pro: false, remaining: 0, limit: DK_FREE_LIMIT, meta: "",
       headers: dkHeaders(DK_FREE_LIMIT, 0),
-      message: "Daily free limit reached (" + DK_FREE_LIMIT + " calls). It resets at 00:00 UTC. Datakoot Pro is " + DK_PRO_INCLUDED.toLocaleString() + " calls a month across all nine servers for $15 with no daily limit — " + DK_CHECKOUT };
+      message: "Daily free limit reached (" + DK_FREE_LIMIT + " calls). It resets at 00:00 UTC. Keep going right now with no account: $0.002 USDC per call via x402 at https://x402.datakoot.com/filings/mcp (charged only on success). Or Datakoot Pro is " + DK_PRO_INCLUDED.toLocaleString() + " calls a month across all nine servers for $15 with no daily limit — " + DK_CHECKOUT };
   }
   const left = DK_FREE_LIMIT - n;
   return { allowed: true, ok: true, pro: false, remaining: left, limit: DK_FREE_LIMIT, message: "",
@@ -510,3 +510,4 @@ async function dkDaily(env, k, period) {
       .bind(k, period, Math.floor(Date.now() / 1000)).run();
   } catch (e) { /* never let analytics break a paying or free call */ }
 }
+
