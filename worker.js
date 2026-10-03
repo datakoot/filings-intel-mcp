@@ -559,43 +559,147 @@ async function dkDaily(env, k, period) {
 
 
 
-/* ---- Datakoot agent metadata layer (2026-10-03) ----
- * Adds MCP 2025-06-18 tool metadata to tools/list without touching tool logic:
- * a human title, and annotations telling agents every tool is a read-only,
- * idempotent lookup against an external public source. Clients use these
- * hints to skip confirmation prompts for safe tools. Anything that is not a
- * JSON tools/list response passes through byte-for-byte.
+
+/* ---- Datakoot agent metadata layer v2 (2026-10-03) ----
+ * Wraps the server without touching tool logic:
+ *  - tools/list: title, MCP annotations (read-only lookups), sharper descriptions where needed,
+ *    and an outputSchema listing the fields each tool returns.
+ *  - tools/call: forgiving inputs (common agent mistakes are normalised before the tool sees them)
+ *    and structuredContent (the parsed JSON object) on every successful result.
+ * Anything that is not a JSON tools/list or tools/call exchange passes through byte-for-byte.
  */
+const __DK_EXTRA = {"company_lookup":{"outputKeys":["cik","name","tickers","exchanges","sic","industry","category","fiscal_year_end","ein","state","former_names"]},"recent_filings":{"outputKeys":["company","cik","count","filings"]},"filing_search":{"outputKeys":["query","total","results"],"params":{"query":"Words or an exact phrase to find anywhere in EDGAR filing text, e.g. \"going concern\" or a product name."}},"financials":{"outputKeys":["company","concept","unit","annual_only","history","note","cik","revenue","latest_reported"]},"insider_transactions":{"outputKeys":["company","cik","note","filings"]}};
+const __DK_COUNTRIES = null;
 const __DK_ACRONYMS = { cve: "CVE", epss: "EPSS", fx: "FX", dns: "DNS", us: "US", sec: "SEC", rdap: "RDAP", url: "URL", ip: "IP" };
+const __DK_STATES = { alabama: "AL", alaska: "AK", arizona: "AZ", arkansas: "AR", california: "CA", colorado: "CO", connecticut: "CT", delaware: "DE", "district of columbia": "DC", "washington dc": "DC", florida: "FL", georgia: "GA", hawaii: "HI", idaho: "ID", illinois: "IL", indiana: "IN", iowa: "IA", kansas: "KS", kentucky: "KY", louisiana: "LA", maine: "ME", maryland: "MD", massachusetts: "MA", michigan: "MI", minnesota: "MN", mississippi: "MS", missouri: "MO", montana: "MT", nebraska: "NE", nevada: "NV", "new hampshire": "NH", "new jersey": "NJ", "new mexico": "NM", "new york": "NY", "north carolina": "NC", "north dakota": "ND", ohio: "OH", oklahoma: "OK", oregon: "OR", pennsylvania: "PA", "rhode island": "RI", "south carolina": "SC", "south dakota": "SD", tennessee: "TN", texas: "TX", utah: "UT", vermont: "VT", virginia: "VA", washington: "WA", "west virginia": "WV", wisconsin: "WI", wyoming: "WY", "puerto rico": "PR", guam: "GU", "american samoa": "AS", "virgin islands": "VI", "us virgin islands": "VI", "northern mariana islands": "MP" };
+
 function __dkTitle(name) {
   return String(name).split("_").map((w) => __DK_ACRONYMS[w] || (w.charAt(0).toUpperCase() + w.slice(1))).join(" ");
 }
 function __dkDecorate(tool) {
   if (!tool || typeof tool !== "object" || !tool.name) return tool;
+  const x = __DK_EXTRA[tool.name] || {};
   const title = tool.title || __dkTitle(tool.name);
-  const ann = Object.assign({ title, readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }, tool.annotations || {});
-  return Object.assign({}, tool, { title, annotations: ann });
-}
-async function __dkWrappedFetch(request, env, ctx) {
-  let isList = false;
-  if (request.method === "POST") {
-    try {
-      const peek = await request.clone().json();
-      isList = !Array.isArray(peek) && peek && peek.method === "tools/list";
-    } catch (e) { isList = false; }
+  const out = Object.assign({}, tool, { title });
+  if (x.description) out.description = x.description;
+  if (x.params && out.inputSchema && out.inputSchema.properties) {
+    const props = Object.assign({}, out.inputSchema.properties);
+    for (const k of Object.keys(x.params)) if (props[k]) props[k] = Object.assign({}, props[k], { description: x.params[k] });
+    out.inputSchema = Object.assign({}, out.inputSchema, { properties: props });
   }
-  const res = await __dkInner.fetch(request, env, ctx);
-  if (!isList) return res;
+  if (!out.outputSchema && Array.isArray(x.outputKeys) && x.outputKeys.length) {
+    const p = {}; for (const k of x.outputKeys) p[k] = {};
+    out.outputSchema = { type: "object", properties: p, additionalProperties: true };
+  }
+  out.annotations = Object.assign({ title, readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }, tool.annotations || {});
+  return out;
+}
+
+const __dkTrim = (v) => (typeof v === "string" ? v.trim() : v);
+function __dkIsoDate(v) {
+  if (typeof v !== "string") return v;
+  const s = v.trim(); let m;
+  if ((m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/))) return m[3] + "-" + m[1].padStart(2, "0") + "-" + m[2].padStart(2, "0");
+  if ((m = s.match(/^(\d{4})[\/.](\d{1,2})[\/.](\d{1,2})$/))) return m[1] + "-" + m[2].padStart(2, "0") + "-" + m[3].padStart(2, "0");
+  return s;
+}
+function __dkCve(v) {
+  if (typeof v !== "string") return v;
+  const s = v.trim();
+  return /^\d{4}-\d{4,}$/.test(s) ? "CVE-" + s : s;
+}
+function __dkCountry(v) {
+  if (typeof v !== "string" || !__DK_COUNTRIES) return v;
+  const s = v.trim();
+  if (/^[A-Za-z]{2}$/.test(s)) return s.toUpperCase();
+  const hit = __DK_COUNTRIES[s.toLowerCase()];
+  return hit || s;
+}
+function __dkNormalize(name, a) {
+  if (!a || typeof a !== "object" || Array.isArray(a)) return a;
+  const o = Object.assign({}, a);
+  for (const k of Object.keys(o)) o[k] = __dkTrim(o[k]);
+  if ((name === "cve_lookup" || name === "known_exploited" || name === "epss_score") && o.cve_id) o.cve_id = __dkCve(o.cve_id);
+  if (name === "epss_score" && o.cve_ids) {
+    const list = Array.isArray(o.cve_ids) ? o.cve_ids : String(o.cve_ids).split(",");
+    o.cve_ids = list.map(__dkCve);
+  }
+  if (typeof o.ecosystem === "string") {
+    o.ecosystem = o.ecosystem.toLowerCase();
+    if (o.ecosystem === "npm" && typeof o.name === "string" && !o.name.startsWith("@")) o.name = o.name.toLowerCase();
+  }
+  if (o.country) o.country = __dkCountry(o.country);
+  if (Array.isArray(o.countries)) o.countries = o.countries.map(__dkCountry);
+  if (name === "fx_historical" && o.date) o.date = __dkIsoDate(o.date);
+  if (name === "fx_timeseries") { if (o.start) o.start = __dkIsoDate(o.start); if (o.end) o.end = __dkIsoDate(o.end); }
+  if (name === "weather_alerts" && typeof o.area === "string") { const st = __DK_STATES[o.area.toLowerCase()]; o.area = st || (/^[a-z]{2}$/i.test(o.area) ? o.area.toUpperCase() : o.area); }
+  if (name === "tx_status" && typeof o.hash === "string" && /^[0-9a-fA-F]{64}$/.test(o.hash)) o.hash = "0x" + o.hash;
+  return o;
+}
+function __dkTitleCase(s) {
+  return String(s).trim().replace(/\s+/g, " ").split(" ").map((w) => (/^[a-z]{2}$/i.test(w) && w === w.toLowerCase() && w.length === 2 ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())).join(" ");
+}
+
+function __dkWithBody(request, body) {
+  const h = new Headers(request.headers); h.delete("content-length");
+  return new Request(request.url, { method: "POST", headers: h, body: JSON.stringify(body) });
+}
+async function __dkJson(res) {
+  const ct = res.headers.get("content-type") || "";
+  if (!ct.includes("application/json")) return null;
+  try { return await res.clone().json(); } catch (e) { return null; }
+}
+function __dkRespond(res, body) {
+  const h = new Headers(res.headers); h.delete("content-length");
+  return new Response(JSON.stringify(body), { status: res.status, statusText: res.statusText, headers: h });
+}
+function __dkAddStructured(body) {
+  const r = body && body.result;
+  if (!r || r.isError || r.structuredContent !== undefined || !Array.isArray(r.content) || !r.content[0] || r.content[0].type !== "text") return false;
   try {
-    const ct = res.headers.get("content-type") || "";
-    if (!ct.includes("application/json")) return res;
-    const body = await res.clone().json();
+    const parsed = JSON.parse(r.content[0].text);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) { r.structuredContent = parsed; return true; }
+  } catch (e) {}
+  return false;
+}
+
+async function __dkWrappedFetch(request, env, ctx) {
+  let msg = null;
+  if (request.method === "POST") {
+    try { const peek = await request.clone().json(); if (peek && !Array.isArray(peek)) msg = peek; } catch (e) { msg = null; }
+  }
+  const method = msg && msg.method;
+  if (method !== "tools/list" && method !== "tools/call") return __dkInner.fetch(request, env, ctx);
+
+  if (method === "tools/list") {
+    const res = await __dkInner.fetch(request, env, ctx);
+    const body = await __dkJson(res);
     if (!body || !body.result || !Array.isArray(body.result.tools)) return res;
     body.result.tools = body.result.tools.map(__dkDecorate);
-    const h = new Headers(res.headers); h.delete("content-length");
-    return new Response(JSON.stringify(body), { status: res.status, statusText: res.statusText, headers: h });
-  } catch (e) {
-    return res;
+    return __dkRespond(res, body);
   }
+
+  // tools/call
+  const name = msg.params && msg.params.name;
+  let req = request;
+  try {
+    const args = (msg.params && msg.params.arguments) || {};
+    const norm = __dkNormalize(name, args);
+    if (JSON.stringify(norm) !== JSON.stringify(args)) req = __dkWithBody(request, Object.assign({}, msg, { params: Object.assign({}, msg.params, { arguments: norm }) }));
+  } catch (e) { req = request; }
+  let res = await __dkInner.fetch(req, env, ctx);
+  let body = await __dkJson(res);
+  // geocode: the Census place gazetteer is case-sensitive; retry once with proper capitalisation.
+  if (name === "geocode" && body && body.result && body.result.isError) {
+    const addr = msg.params && msg.params.arguments && msg.params.arguments.address;
+    const fixed = typeof addr === "string" ? __dkTitleCase(addr) : null;
+    if (fixed && fixed !== addr) {
+      const res2 = await __dkInner.fetch(__dkWithBody(request, Object.assign({}, msg, { params: Object.assign({}, msg.params, { arguments: Object.assign({}, msg.params.arguments, { address: fixed }) }) })), env, ctx);
+      const body2 = await __dkJson(res2);
+      if (body2 && body2.result && !body2.result.isError) { res = res2; body = body2; }
+    }
+  }
+  if (!body) return res;
+  return __dkAddStructured(body) ? __dkRespond(res, body) : res;
 }
 export default Object.assign({}, __dkInner, { fetch: __dkWrappedFetch });
