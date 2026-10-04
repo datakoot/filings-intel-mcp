@@ -691,11 +691,12 @@ async function __dkWrappedFetch(request, env, ctx) {
     if (JSON.stringify(norm) !== JSON.stringify(args)) req = __dkWithBody(request, Object.assign({}, msg, { params: Object.assign({}, msg.params, { arguments: norm }) }));
   } catch (e) { req = request; }
   let res = await __dkInner.fetch(req, env, ctx);
-  // Per-tool usage counter (which tools callers actually use). Counts tool + server per UTC day, nothing about the caller.
+  // Per-tool usage counter (which tools callers actually use). Counts tool + server per UTC day, plus whether a key was sent
+  // (keyed = Pro keys incl. our own demos and Koot; unkeyed = anonymous free callers). Nothing else about the caller.
   if (env.QUOTA_DB && ctx && typeof name === "string" && name.length < 64) ctx.waitUntil((async () => {
     try {
-      await env.QUOTA_DB.prepare("CREATE TABLE IF NOT EXISTS tool_usage (day TEXT NOT NULL, server TEXT NOT NULL, tool TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (day, server, tool))").run();
-      await env.QUOTA_DB.prepare("INSERT INTO tool_usage (day, server, tool, n) VALUES (?1, ?2, ?3, 1) ON CONFLICT(day, server, tool) DO UPDATE SET n = n + 1").bind(new Date().toISOString().slice(0, 10), new URL(request.url).hostname.split(".")[0], name).run();
+      await env.QUOTA_DB.prepare("CREATE TABLE IF NOT EXISTS tool_calls (day TEXT NOT NULL, server TEXT NOT NULL, tool TEXT NOT NULL, keyed INTEGER NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (day, server, tool, keyed))").run();
+      await env.QUOTA_DB.prepare("INSERT INTO tool_calls (day, server, tool, keyed, n) VALUES (?1, ?2, ?3, ?4, 1) ON CONFLICT(day, server, tool, keyed) DO UPDATE SET n = n + 1").bind(new Date().toISOString().slice(0, 10), new URL(request.url).hostname.split(".")[0], name, /^Bearer\s+\S/.test(request.headers.get("Authorization") || "") ? 1 : 0).run();
     } catch (e) { console.error("tool_usage count failed:", e && e.message); }
   })());
   let body = await __dkJson(res);
