@@ -457,6 +457,9 @@ function dkHeaders(limit, remaining) {
 const DK_OPEN = { allowed: true, ok: true, pro: true, remaining: null, limit: null, message: "", headers: {}, meta: "" };
 
 async function dkGate(request, env) {
+  // Internal Datakoot services (Koot, the x402 gateway) authenticate with a shared secret and are not metered, so a
+  // burst through them can never drain a customer's or the founder's Pro allowance. Nothing else changes.
+  if (env.DK_INTERNAL) { const _ik = request.headers.get("X-DK-Internal") || ""; if (_ik.length === String(env.DK_INTERNAL).length && _ik === String(env.DK_INTERNAL)) return { ok: true, allowed: true, pro: true, internal: true, remaining: null, limit: null, used: null, headers: {}, meta: "" }; }
   let key = (request.headers.get("Authorization") || "").trim();
   if (key.toLowerCase().indexOf("bearer ") === 0) key = key.slice(7).trim();
   if (!key) key = (request.headers.get("X-Datakoot-Key") || "").trim();
@@ -692,11 +695,11 @@ async function __dkWrappedFetch(request, env, ctx) {
   } catch (e) { req = request; }
   let res = await __dkInner.fetch(req, env, ctx);
   // Per-tool usage counter (which tools callers actually use). Counts tool + server per UTC day, plus whether a key was sent
-  // (keyed = Pro keys incl. our own demos and Koot; unkeyed = anonymous free callers). Nothing else about the caller.
+  // (keyed 1 = Pro key incl. our demos; 2 = internal Datakoot service such as Koot or the x402 gateway; 0 = anonymous free callers). Nothing else about the caller.
   if (env.QUOTA_DB && ctx && typeof name === "string" && name.length < 64) ctx.waitUntil((async () => {
     try {
       await env.QUOTA_DB.prepare("CREATE TABLE IF NOT EXISTS tool_calls (day TEXT NOT NULL, server TEXT NOT NULL, tool TEXT NOT NULL, keyed INTEGER NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (day, server, tool, keyed))").run();
-      await env.QUOTA_DB.prepare("INSERT INTO tool_calls (day, server, tool, keyed, n) VALUES (?1, ?2, ?3, ?4, 1) ON CONFLICT(day, server, tool, keyed) DO UPDATE SET n = n + 1").bind(new Date().toISOString().slice(0, 10), new URL(request.url).hostname.split(".")[0], name, /^Bearer\s+\S/.test(request.headers.get("Authorization") || "") ? 1 : 0).run();
+      await env.QUOTA_DB.prepare("INSERT INTO tool_calls (day, server, tool, keyed, n) VALUES (?1, ?2, ?3, ?4, 1) ON CONFLICT(day, server, tool, keyed) DO UPDATE SET n = n + 1").bind(new Date().toISOString().slice(0, 10), new URL(request.url).hostname.split(".")[0], name, request.headers.get("X-DK-Internal") ? 2 : /^Bearer\s+\S/.test(request.headers.get("Authorization") || "") ? 1 : 0).run();
     } catch (e) { console.error("tool_usage count failed:", e && e.message); }
   })());
   let body = await __dkJson(res);
