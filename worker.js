@@ -466,13 +466,16 @@ async function dkGate(request, env) {
     if (env.RL) { try { if ((await env.RL.get("pk:" + (await dkSha96("dk1:" + key)))) === "1") pro = true; } catch (e) {} }
     if (!pro) {
       try {
-        const vr = await fetch("https://api.polar.sh/v1/customer-portal/license-keys/validate", {
+        var __dkSure = false; const vr = await fetch("https://api.polar.sh/v1/customer-portal/license-keys/validate", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ key: key, organization_id: DK_POLAR_ORG }),
-        });
+        }); __dkSure = vr.ok || vr.status === 400 || vr.status === 404 || vr.status === 422;
         if (vr.ok) { const _pd = await vr.json().catch(() => null); pro = !!(_pd && (!("status" in _pd) || _pd.status === "granted")); if (pro && env.RL) { try { await env.RL.put("pk:" + (await dkSha96("dk1:" + key)), "1", { expirationTtl: 3600 }); } catch (e) {} } }
       } catch (e) { /* Polar unreachable: fall through to the invalid-key branch */ }
     }
+    if (pro && __dkSure && env.RL) { try { await env.RL.put("pkok:" + (await dkSha96("dk1:" + key)), "1", { expirationTtl: 2592000 }); } catch (e) {} }
+    /* Polar hiccup (429/5xx/network): honour a key that validated within 30 days. Only an explicit "no" rejects. */
+    if (!pro && !__dkSure && env.RL) { try { if (await env.RL.get("pkok:" + (await dkSha96("dk1:" + key)))) pro = true; } catch (e) {} }
     if (!pro) {
       // A key that does not validate used to fall silently back to the free
       // tier, so a paying customer with a typo looked throttled for no reason.
@@ -688,6 +691,13 @@ async function __dkWrappedFetch(request, env, ctx) {
     if (JSON.stringify(norm) !== JSON.stringify(args)) req = __dkWithBody(request, Object.assign({}, msg, { params: Object.assign({}, msg.params, { arguments: norm }) }));
   } catch (e) { req = request; }
   let res = await __dkInner.fetch(req, env, ctx);
+  // Per-tool usage counter (which tools callers actually use). Counts tool + server per UTC day, nothing about the caller.
+  if (env.QUOTA_DB && ctx && typeof name === "string" && name.length < 64) ctx.waitUntil((async () => {
+    try {
+      await env.QUOTA_DB.prepare("CREATE TABLE IF NOT EXISTS tool_usage (day TEXT NOT NULL, server TEXT NOT NULL, tool TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (day, server, tool))").run();
+      await env.QUOTA_DB.prepare("INSERT INTO tool_usage (day, server, tool, n) VALUES (?1, ?2, ?3, 1) ON CONFLICT(day, server, tool) DO UPDATE SET n = n + 1").bind(new Date().toISOString().slice(0, 10), new URL(request.url).hostname.split(".")[0], name).run();
+    } catch (e) { console.error("tool_usage count failed:", e && e.message); }
+  })());
   let body = await __dkJson(res);
   // geocode: the Census place gazetteer is case-sensitive; retry once with proper capitalisation.
   if (name === "geocode" && body && body.result && body.result.isError) {
@@ -703,3 +713,5 @@ async function __dkWrappedFetch(request, env, ctx) {
   return __dkAddStructured(body) ? __dkRespond(res, body) : res;
 }
 export default Object.assign({}, __dkInner, { fetch: __dkWrappedFetch });
+
+
