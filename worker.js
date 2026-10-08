@@ -733,6 +733,114 @@ const __dkKeyShim = (request) => {
   return request;
 };
 
-export default Object.assign({}, __dkInner, { fetch: (request, env, ctx) => __dkWrappedFetch(__dkKeyShim(request), env, ctx) });
+
+// Datakoot provenance (2026-10-08): every successful tools/call answer carries
+// provenance = { served_at, upstream[], publisher, may_be_cached }, and tools/list
+// advertises the field in each tool's outputSchema. Tools whose outputSchema forbids
+// extra properties get it in result._meta["com.datakoot/provenance"] instead, so no
+// published contract is broken. Pure decoration: on any error the original response
+// is returned untouched.
+const __DK_STRICT = new Set(["fx_rates", "fx_historical", "fx_currencies"]);
+const __DK_PROV_SCHEMA = {
+  type: "object",
+  description: "Where this answer came from. served_at is when Datakoot answered (UTC); upstream lists the official sources consulted. Datakoot may serve a briefly cached copy, so the source's own observation can be older than served_at.",
+  properties: {
+    served_at: { type: "string", format: "date-time" },
+    upstream: { type: "array", items: { type: "string" } },
+    publisher: { type: "string" },
+    may_be_cached: { type: "boolean" }
+  }
+};
+function __dkUpstream(n, a) {
+  a = a || {};
+  const eco = String(a.ecosystem || "").toLowerCase();
+  const reg = eco === "npm" ? "npm registry (registry.npmjs.org)"
+    : (eco === "pypi" || eco === "pip") ? "PyPI (pypi.org)"
+    : (eco === "cargo" || eco === "crates" || eco === "crates.io") ? "crates.io" : null;
+  const DEPS = "deps.dev (Open Source Insights)";
+  switch (n) {
+    case "cve_lookup": return ["NIST National Vulnerability Database (NVD)", "CISA Known Exploited Vulnerabilities catalog", "FIRST EPSS"];
+    case "known_exploited": return ["CISA Known Exploited Vulnerabilities catalog"];
+    case "epss_score": return ["FIRST EPSS"];
+    case "package_vulnerabilities": case "audit_dependencies": return ["OSV.dev"];
+    case "package_info": case "package_versions": case "package_search": return reg ? [reg] : ["npm registry", "PyPI", "crates.io"];
+    case "package_downloads": return eco === "npm" ? ["npm downloads API (api.npmjs.org)"] : (reg ? [reg] : ["npm downloads API", "crates.io"]);
+    case "package_dependencies": return [DEPS].concat(reg ? [reg] : []);
+    case "package_health": return (reg ? [reg] : []).concat([DEPS]);
+    case "company_lookup": case "recent_filings": case "filing_search": case "financials": case "insider_transactions": return ["SEC EDGAR"];
+    case "country_indicator": case "country_profile": case "compare_countries": return ["World Bank Open Data"];
+    case "us_series": return /retail/i.test(String(a.series || "")) ? ["US Census Bureau (Advance Monthly Retail Trade)"] : ["US Bureau of Labor Statistics"];
+    case "list_indicators": return ["World Bank Open Data", "US Bureau of Labor Statistics", "US Census Bureau"];
+    case "fx_rates": case "fx_convert": case "fx_historical": case "fx_timeseries": case "fx_currencies": return ["European Central Bank reference rates (via the Frankfurter API)"];
+    case "geocode": return ["US Census Geocoder", "US Census TIGERweb"];
+    case "weather_forecast": case "weather_current": case "weather_alerts": return ["US National Weather Service (api.weather.gov)"];
+    case "earthquakes": return ["USGS Earthquake Hazards Program"];
+    case "elevation": return ["USGS Elevation Point Query Service (3DEP)"];
+    case "domain_intel": return ["RDAP (via rdap.org bootstrap)"];
+    case "dns_lookup": return ["Cloudflare DNS over HTTPS"];
+    case "email_deliverability": return ["DNS records (via Cloudflare DNS over HTTPS)"];
+    case "tech_stack": return ["The target website itself"];
+    case "subdomains": return ["Certificate Transparency logs (crt.sh, Cert Spotter)"];
+    case "domain_report": return ["RDAP (via rdap.org bootstrap)", "Cloudflare DNS over HTTPS", "The target website itself"];
+    case "search_documents": case "document": case "recent_documents": case "executive_orders": case "agencies": return ["Federal Register API (federalregister.gov)"];
+    case "address_report": case "token_info": case "token_balance": case "gas_now": case "tx_status": return ["Base mainnet public JSON-RPC"];
+  }
+  return [];
+}
+async function __dkProvenance(request, run) {
+  if (request.method !== "POST") return run(request);
+  let msgs;
+  try { msgs = JSON.parse(await request.clone().text()); } catch (_) { return run(request); }
+  const arr = Array.isArray(msgs) ? msgs : [msgs];
+  const calls = new Map(); let wantsList = false;
+  for (const m of arr) {
+    if (!m || typeof m !== "object") continue;
+    if (m.method === "tools/call" && m.params && typeof m.params.name === "string") calls.set(JSON.stringify(m.id), m.params);
+    if (m.method === "tools/list") wantsList = true;
+  }
+  if (!calls.size && !wantsList) return run(request);
+  const res = await run(request);
+  try {
+    if (!(res.headers.get("content-type") || "").includes("application/json")) return res;
+    const out = JSON.parse(await res.clone().text());
+    const outs = Array.isArray(out) ? out : [out];
+    const now = new Date().toISOString();
+    let changed = false;
+    for (const o of outs) {
+      if (!o || !o.result || typeof o.result !== "object") continue;
+      const r = o.result;
+      if (Array.isArray(r.tools)) {
+        for (const t of r.tools) {
+          const os = t && t.outputSchema;
+          if (!os || os.type !== "object" || os.additionalProperties === false || __DK_STRICT.has(t.name)) continue;
+          os.properties = os.properties || {};
+          if (!os.properties.provenance) { os.properties.provenance = __DK_PROV_SCHEMA; changed = true; }
+        }
+      }
+      const p = calls.get(JSON.stringify(o.id));
+      const sc = r.structuredContent;
+      if (!p || r.isError || !sc || typeof sc !== "object" || Array.isArray(sc)) continue;
+      const prov = { served_at: now, upstream: __dkUpstream(p.name, p.arguments), publisher: "Datakoot (datakoot.com)", may_be_cached: true };
+      if (__DK_STRICT.has(p.name)) {
+        r._meta = Object.assign({}, r._meta, { "com.datakoot/provenance": prov });
+        changed = true;
+      } else if (!("provenance" in sc)) {
+        const before = JSON.stringify(sc, null, 2);
+        r.structuredContent = Object.assign({}, sc, { provenance: prov });
+        if (Array.isArray(r.content)) {
+          for (const c of r.content) {
+            if (c && c.type === "text" && c.text === before) c.text = JSON.stringify(r.structuredContent, null, 2);
+          }
+        }
+        changed = true;
+      }
+    }
+    if (!changed) return res;
+    const h = new Headers(res.headers); h.delete("content-length");
+    return new Response(JSON.stringify(out), { status: res.status, statusText: res.statusText, headers: h });
+  } catch (_) { return res; }
+}
+
+export default Object.assign({}, __dkInner, { fetch: (request, env, ctx) => __dkProvenance(request, (r) => __dkWrappedFetch(__dkKeyShim(r), env, ctx)) });
 
 
