@@ -1,6 +1,7 @@
-# Hosted, keyless MCP server — https://filings.datakoot.com/mcp (no API key).
-# This image bridges the hosted endpoint to stdio with mcp-remote so
-# registries (e.g. Glama) can start it and run initialize / tools/list.
+# Runs this server's own code (worker.js) locally as an MCP stdio server, so
+# registries such as Glama can start it and run initialize / tools/list.
+# Production is hosted at https://filings.datakoot.com/mcp (no API key).
 FROM node:22-alpine
-RUN npm install -g mcp-remote@0.14.3
-ENTRYPOINT ["mcp-remote", "https://filings.datakoot.com/mcp", "--transport", "http-only"]
+WORKDIR /app
+COPY . .
+CMD ["node", "stdio.mjs"]
