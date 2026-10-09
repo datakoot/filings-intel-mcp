@@ -1,0 +1,12 @@
+{
+  "name": "filings-intel-mcp",
+  "private": true,
+  "type": "module",
+  "description": "Datakoot filings MCP server (Cloudflare Worker). Production: https://filings.datakoot.com/mcp. Local stdio: node stdio.mjs",
+  "scripts": {
+    "start": "node stdio.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
