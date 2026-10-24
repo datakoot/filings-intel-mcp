@@ -327,7 +327,7 @@ function landing(host) {
 
 <section class="section" id="pricing"><h2>Pricing</h2><div class="tiers">
 <div class="tier"><b>Free</b><span>100 calls / day</span><span>Every tool, no key.</span></div>
-<div class="tier"><b>$15/mo · Pro</b><span>50,000 calls / month · no daily limit</span><span>One key unlocks all nine Datakoot servers. Full speed to 50k, then free-tier speed or top up — never cut off.</span><a class="btn" href="${CHECKOUT}">Upgrade</a></div>
+<div class="tier"><b>$10/mo · Pro</b><span>50,000 calls / month · no daily limit</span><span>One key unlocks all nine Datakoot servers. Full speed to 50k, then free-tier speed or top up — never cut off.</span><a class="btn" href="${CHECKOUT}">Upgrade</a></div>
 </div></section>
 </div>
 <footer><a href="https://datakoot.com/" style="color:inherit">Datakoot</a> — infrastructure for the agent economy · <a href="https://github.com/datakoot">GitHub</a> · Data: U.S. SEC EDGAR (public domain)</footer>
@@ -517,7 +517,7 @@ async function dkGate(request, env) {
   if (n > DK_FREE_LIMIT) {
     return { allowed: false, ok: false, pro: false, remaining: 0, limit: DK_FREE_LIMIT, meta: "",
       headers: dkHeaders(DK_FREE_LIMIT, 0),
-      message: "Daily free limit reached (" + DK_FREE_LIMIT + " calls). It resets at 00:00 UTC. Finish this same call right now with no account, no email and no signup: send the identical tools/call to https://x402.datakoot.com/filings/mcp (or POST the same arguments as JSON to https://x402.datakoot.com/api/<tool name>). The first reply is HTTP 402 with x402 v2 payment terms; pay $0.01 USDC on Base (exact scheme) and resend. Charged only on success. Or Datakoot Pro is " + DK_PRO_INCLUDED.toLocaleString() + " calls a month across all nine servers for $15 with no daily limit — " + DK_CHECKOUT };
+      message: "Daily free limit reached (" + DK_FREE_LIMIT + " calls). It resets at 00:00 UTC. Finish this same call right now with no account, no email and no signup: send the identical tools/call to https://x402.datakoot.com/filings/mcp (or POST the same arguments as JSON to https://x402.datakoot.com/api/<tool name>). The first reply is HTTP 402 with x402 v2 payment terms; pay $0.01 USDC on Base (exact scheme) and resend. Charged only on success. Or Datakoot Pro is " + DK_PRO_INCLUDED.toLocaleString() + " calls a month across all nine servers for $10 with no daily limit — " + DK_CHECKOUT };
   }
   const left = DK_FREE_LIMIT - n;
   return { allowed: true, ok: true, pro: false, remaining: left, limit: DK_FREE_LIMIT, message: "",
